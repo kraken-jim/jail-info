@@ -1,0 +1,15 @@
+name: jail-info
+version: "0.1c"
+origin: wwu/jail-info
+comment: "jail-info"
+desc: "jail-info"
+maintainer: longj22@wwu.edu
+www: https://wiki.chem.wwu.edu/index.php/WWU_Packages
+arch: *
+prefix: /
+deps: {
+  bash: { version: "5.2.37", origin: shells/bash }
+}
+annotations {
+	FreeBSD_version = "14";
+}
