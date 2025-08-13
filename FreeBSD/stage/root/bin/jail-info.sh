@@ -2,33 +2,6 @@
 
 set -e
 
-#==================================================
-#
-#	Extract jail info from /etc/jail.conf files
-#
-#==================================================
-
-
-#	jail-info.sh list
-#
-#		print a tab-delimited list of jails configured in /etc/jail.conf
-
-#	jail-info.sh list (jail_name) [ (jail_name) ] ...
-#
-#		list all parameters of jail(s) (jail_name) in /etc/jail.conf
-
-#	jail-info.sh (jail_name) param [ param ] ...
-#
-#		show value of param in jail (jail_name)'s config
-
-#	(jail_name) can be  ALL  in any of the above, in which
-#	case it will be expanded to the list of jails in /etc/rc.conf
-#	variable jail_list.
-
-# -n           Do not show variable names.  This option is useful for
-#                   setting shell variables.
-
-
 while getopts "dnh?" opt
 do
 	case "$opt" in
@@ -50,18 +23,69 @@ done
 shift $(($OPTIND-1))
 
 
+#==================================================
+#
+#	Extract jail info from /etc/jail.conf files
+#
+#==================================================
+
+usage() {
+
+cat << EOF
+usage:
+
+	jail-info.sh -[hn] list [ (jail_name) [ (jail_name) ... ] ]
+
+		If no jail_name is given, print a tab-delimited list of jails
+		known to jail(8).  Otherwise, print jail_name for each 
+		jail_name specified that is known to jail(8).  If at least
+		one of the jails is found, return success.  If none of the
+		jails can be found, return failure.  This can be used to
+		test whether a jail is defined:
+
+			jail-info.sh list myjail || echo "myjail was not found"
+
+	jail-info.sh [ (jail_name) | all ] [ all | param [ param ... ] ]
+
+		show value of param in the configuration for jail
+		(jail_name); if "all" is used as a jail name, show the
+		selected params for all defined jails.  If "all" is used as 
+		the first parameter name, print all parameters for the
+		selected jail(s).  If none of the parameters is defined, 
+		return failure, else return success.
+
+	OPTIONS
+		-h	Show this help message.
+
+ 		-n	Do not show variable names.  Show values only, all on one
+			line.  For each jail, in sequence, the selected parameter 
+			values are printed with with bash-style quoting, space-
+			separated, in the order specified on the command line.  
+			This option is useful for setting shell variables, for
+			example:
+
+				jail-info.sh -n all linux.osname name path |
+				while IFS= read -r line; do 
+					eval set -- "${line}"
+					printf 'jail "%s" is running "%s", ' "$2" "$1"
+					printf 'jail root is "%s"\n' "$3"
+				done
+
+EOF
+
+} # usage
+
+
 jail_info() {
 
-local executable="/root/bin/"
-
-	[[ -x "$executable"jail ]] || unset executable
-
-	"$executable"jail -e ''		# NUL-delimited fields, with an empty,
-								# NUL-delimited line between jails
+	jail -e ''		# NUL-delimited fields, with an empty,
+					# NUL-delimited line between jails
 } # jail_info
 
 
 jail_pop_array() {
+
+#	args are call-by-reference, not call-by-value
 
 #	$1 is NAME of associative array to return
 #	$2 is NAME of indexed NUL-terminated array to read from
@@ -71,25 +95,25 @@ jail_pop_array() {
 
 #	CALLER MUST declare $1 associative PRIOR to calling
 
-local -n jp="$1" jls="$2"
+local -n jpop="$1" jails="$2"
 local ind elem var val
 
-	for var in ${!jp[@]}
+	for var in ${!jpop[@]}
 	do
-		unset jp["$var"]
+		unset jpop["$var"]
 	done
 
 # keep a list of the keys in the order they were added
 
-	jp["_keys"]=" "
+	jpop["_keys"]=" "
 
-	for ind in ${!jls[@]}
+	for ind in ${!jails[@]}
 	do
 
-		elem="${jls[ind]}"
-		unset jls[$ind]
+		elem="${jails[ind]}"
+		unset jails[$ind]
 
-#[[ $debug ]] && printf '%2d:	%s\n' $ind "$elem"
+#[[ $debug ]] && printf >&2 '%2d:	%s\n' $ind "$elem"
 
 		[[ "$elem" ]] || break
 
@@ -97,9 +121,9 @@ local ind elem var val
 		val="${elem#$var}"		# remainder is value
 		val="${val#=}"			# strip leading '=' off value, if present
 
-#[[ $debug ]] && [[ "$val" =~ exec\..* ]] && printf 'jp[%s]="%s"\n' "$var" "$val"
-		jp["_keys"]+="$var "
-		jp["$var"]="$val"
+		jpop["_keys"]+="$var "	# append key to ordered list of keys
+
+		jpop["$var"]="$val"		# set value in associative array
 
 	done
 
@@ -170,7 +194,7 @@ main() {
 # $2 .. $N is jail names for "list"
 #          or jail parameters or "all" for "all" or jail name
 
-local jails params cmd j_info j sp nm v
+local rc=1 jails params cmd j_array one_jail sp
 
 declare -a jails params
 
@@ -190,49 +214,47 @@ declare -a jails params
 
 	fi
 
-# jail_info returns NUL-delimited lines, one field per line
-# lines start with <variablename>.  empty NUL-terminated line
-# after each jail.
+# jail_info returns NUL-delimited lines, one field per line.
+# lines start with <variablename>.  one empty NUL-terminated
+# line after each jail.
 
-	readarray -d "" j_info < <(jail_info)
+	readarray -d "" j_array < <(jail_info) || return
+	[[ ${#j_array[@]} -gt 0 ]] || return
 
-	declare -A j						# Must declare associative BEFORE call
+	declare -A one_jail						# Must declare associative BEFORE call
 
-	while jail_pop_array j j_info		# pop one jail off of j_info into j
+	while jail_pop_array one_jail j_array	# pop one jail off of j_array into j
 	do {
 
 		if [[ "$cmd" == "list" ]]
 		then
 
 			if ( [[ ${#jails[@]} -eq 0 ]] ||
-					egrep -Fqx "${j["name"]}" < <(printf '%s\n' "${jails[@]}") )
+					egrep -Fqx "${one_jail["name"]}" < <(printf '%s\n' "${jails[@]}") )
 			then
-				printf '%s' "${sp:+$'\t'}" "${j["name"]}"
-				sp=$'\n'
+				printf '%s' "${sp:+$'\t'}" "${one_jail["name"]}"
+				rc=0
+				sp=$'\n'	# we'll need a newline eventually
 			fi
 
 		elif [[ "$cmd" == "show" ]]
 		then
 
 			if ( [[ ${#jails[@]} -eq 0 ]] ||
-					egrep -Fqx "${j["name"]}" < <(printf '%s\n' "${jails[@]}") )
+					egrep -Fqx "${one_jail["name"]}" < <(printf '%s\n' "${jails[@]}") )
 			then
 
-				j_nm="${j["name"]}"
+# some parameters are simply declared, but not assigned any value.
 
-# many variables are simply declared, and not assigned any value.
-# Should we assign them a value of 1?
-
-				if [[ ${#params[@]} -gt 0 ]]
+				if [[ ${#params[@]} -gt 0 ]]	# if specific params are given,
 				then
-					set -- ${params[@]}
+					set -- ${params[@]}			# then use only those.
 				else
-					set -- ${j["_keys"]}
+					set -- ${one_jail["_keys"]}	# Otherwise show all params
 				fi
 
-				jail_print "j" "$@" | bash
-#				bash -s -- "$@" < bash.in.$j_nm > bash.out.$j_nm 2>&1
-#				cat bash.out.$j_nm
+				jail_print "one_jail" "$@" | bash
+				rc=$?
 
 			fi
 
@@ -242,8 +264,9 @@ declare -a jails params
 
 	printf '%s' "$sp"		# print newline if needed
 
-} # main
+	return $rc
 
+} # main
 
 
 main "$@"
