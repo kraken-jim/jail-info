@@ -1,5 +1,5 @@
 name: jail-info
-version: "0.2"
+version: "0.3"
 origin: wwu/jail-info
 comment: "jail-info"
 desc: "jail-info"

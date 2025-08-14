@@ -1,40 +1,19 @@
 #!/usr/bin/env bash
 
-set -e
-
-while getopts "dnh?" opt
-do
-	case "$opt" in
-	d)
-		debug=1
-		;;
-	n)
-		vals_only=1		# show values only, not variable names
-		;;
-	h|\?)
-		usage
-		exit 1
-		;;
-	*)
-		printf 'unknown option: %s\n' "$opt"
-	esac
-done
-
-shift $(($OPTIND-1))
-
-
 #==================================================
 #
 #	Extract jail info from /etc/jail.conf files
 #
 #==================================================
 
+set -e
+
 usage() {
 
 cat << EOF
 usage:
 
-	jail-info.sh -[hn] list [ (jail_name) [ (jail_name) ... ] ]
+	jail-info.sh [-[hn]] --list [ (jail_name) [ (jail_name) ... ] ]
 
 		If no jail_name is given, print a tab-delimited list of jails
 		known to jail(8).  Otherwise, print jail_name for each 
@@ -43,7 +22,10 @@ usage:
 		jails can be found, return failure.  This can be used to
 		test whether a jail is defined:
 
-			jail-info.sh list myjail || echo "myjail was not found"
+			for j in myjail \$(jail-info.sh --list) bogus; do
+			  jail-info.sh list $j > /dev/null ||
+				echo "jail $j was not found"
+			done
 
 	jail-info.sh [ (jail_name) | all ] [ all | param [ param ... ] ]
 
@@ -53,6 +35,67 @@ usage:
 		the first parameter name, print all parameters for the
 		selected jail(s).  If none of the parameters is defined, 
 		return failure, else return success.
+
+		If none of the given parameters are defined in the specified
+		jails, a failure result code is returned.  If at least one of
+		the parameters is defined in at least one of the jails, then
+		those parameters which are not defined in any of the jails are
+		printed as "--", and the rest of the parameters are printed 
+		normally.  Be aware that messages to stderr may be intermingled
+		with message to stdout, and it may be desirable to redirect 
+		them separately:
+
+			jail-info.sh -n all devfs_ruleset name path 2>/dev/null
+			-- 'aarch64' '/jail/aarch64'
+			-- 'mailman2' '/jail/mailman2'
+			-- 'puppet-test' '/jail/puppet-test'
+			'7' 'rocky' '/jail/rocky'
+			-- 'webwork2' '/jail/webwork2'
+
+		In this example, we see that only the "rocky" jail has the 
+		"devfs_ruleset" parameter defined.  The error messages that
+		would have made that obvious were discarded to /dev/null.
+		Discarding stdout instead yields:
+
+			jail-info.sh -n all devfs_ruleset name path >/dev/null
+			parameter "devfs_ruleset" is unset in jail aarch64
+			parameter "devfs_ruleset" is unset in jail mailman2
+			parameter "devfs_ruleset" is unset in jail puppet-test
+			parameter "devfs_ruleset" is unset in jail webwork2
+
+		Either way the result code is the successful, because the 
+		parameter was found in at least one jail.  Conversely, the
+		case of:
+
+			jail-info.sh all foobar ; echo $?
+
+		yields stderr of:
+
+			parameter "foobar" is unset in jail aarch64
+			parameter "foobar" is unset in jail mailman2
+			parameter "foobar" is unset in jail puppet-test
+			parameter "foobar" is unset in jail rocky
+			parameter "foobar" is unset in jail webwork2
+
+		and a result code of 1.  The stdout from that command is:
+
+			unset foobar
+			unset foobar
+			unset foobar
+			unset foobar
+			unset foobar
+
+		but still a result code of 1.  The intent is to differentiate
+		between a defined parameter with a null value versus an 
+		undefined parameter.  A mixed case may be more interesting:
+
+			jail-info.sh all devfs_ruleset 2>/dev/null; echo $?
+			unset devfs_ruleset
+			unset devfs_ruleset
+			unset devfs_ruleset
+			devfs_ruleset='7'
+			unset devfs_ruleset
+			0
 
 	OPTIONS
 		-h	Show this help message.
@@ -74,6 +117,32 @@ usage:
 EOF
 
 } # usage
+
+
+list=
+
+while getopts "dnh?-:" opt
+do
+	case "$opt" in
+	-)
+		[[ "$OPTARG" == "list" ]] && list=1 #&& echo list
+		;;
+	d)
+		debug=1
+		;;
+	n)
+		vals_only=1		# show values only, not variable names
+		;;
+	h|\?)
+		usage
+		exit 1
+		;;
+	*)
+		printf 'unknown option: %s\n' "$opt"
+	esac
+done
+
+shift $(($OPTIND-1))
 
 
 jail_info() {
@@ -134,49 +203,54 @@ local ind elem var val
 
 jail_print() {
 
-# generate a bash script on standard output that will print the caller's
-# choice of variables from the jail array passed by name in $1
+# print the caller's choice of variables from the jail array 
+# passed by name in $1
 
 # variables to print are in $2 .. $N
 
 local -n jail
-local jail_array sp v val
+local rc=1 sp v val
 
-	jail="$1"			# pointer to the jail info array
-	jail_array="$1"		# name    of the jail info array
+	jail="$1"			# pointer to the associative jail array
 
-	shift
+	shift				# $@ is list of parameters to print
 
-	echo "${jail[@]@A}"
-	echo "unset vals_only"
-	echo "${vals_only@A}"
+	for v in "${@}"
+	do
+		if [[ "${jail[$v]@Q}" ]]		# if parameter is set, even empty string
+		then
 
-# This perhaps would be a little clearer if converted to a
-# printf (sigh, but then we'd have nested printf's ....)
+[[ $debug ]] && printf >&2 'parameter "%s" is %s\n' "${v}" "${jail[$v]@Q}"
+			rc=0
+			val="${jail[$v]@Q}"
+			if [[ $vals_only ]]
+			then
+				printf '%s%s' "$sp" "$val"
+				sp=' '
+			else
+				printf '%s=%s\n' "$v" "$val"
+			fi
 
-# Even so, why not eventually move toward just printing
-# the values ourself, straight from the jail array?
+		else	# parameter is unset
 
-	cat << EOF
-sp=
-for v in ${@}
-do
-	val="\${$jail_array["\$v"]}"
-	val="\${val@A}"
-	val="\${val#val=}"
-	if [[ \$vals_only ]]
+			printf >&2 'parameter "%s" is unset in jail %s\n' \
+				"${v}" "${jail[name]}" 
+			if [[ $vals_only ]]
+			then
+				printf '%s%s' "$sp" "--"
+				sp=' '
+			else
+				printf 'unset %s\n' "$v"
+			fi
+
+		fi
+	done
+	if [[ $vals_only ]] && [[ $sp ]]
 	then
-		printf '%s%s' "\$sp" "\${val}"
-		sp=' '
-	else
-		printf '%s%s\n' "\$v" "\${val:+=\${val}}"
+		printf '\n'
 	fi
-done
-if [[ \$vals_only ]]
-then
-	printf '\n'
-fi
-EOF
+
+	return $rc
 
 } # jail_print
 
@@ -190,19 +264,23 @@ EOF
 
 main() {
 
+# this has changed:
 # $1 is "list", "all" or jail name
 # $2 .. $N is jail names for "list"
 #          or jail parameters or "all" for "all" or jail name
+# update the above when the dust settles
+
+#echo ${list@A}
 
 local rc=1 jails params cmd j_array one_jail sp
 
 declare -a jails params
 
-	if [[ "${1,,}" == "list" ]]				# possibly followed by jail names
+	if [[ "$list" ]]						# possibly followed by jail names
 	then									# to list, *if* they are defined
 
+#echo main: list
 		cmd="list"
-		shift
 		[[ $# -eq 0 ]] || jails=( "$@" )	# empty array means list all defined names
 
 	else									# otherwise $1 is "all" or a jail name
@@ -253,8 +331,8 @@ declare -a jails params
 					set -- ${one_jail["_keys"]}	# Otherwise show all params
 				fi
 
-				jail_print "one_jail" "$@" | bash
-				rc=$?
+				jail_print "one_jail" "$@" && rc=0
+#				rc=$?
 
 			fi
 
