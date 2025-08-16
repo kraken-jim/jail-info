@@ -2,7 +2,7 @@
 
 #==================================================
 #
-#	Extract jail info from /etc/jail.conf files
+#  Extract jail info from /etc/jail.conf files
 #
 #==================================================
 
@@ -10,10 +10,10 @@ set -e
 
 usage() {
 
-cat << EOF
+cat << \EOF
 usage:
 
-	jail-info.sh [-[hn]] --list [ (jail_name) [ (jail_name) ... ] ]
+	jail-info.sh [-[hnq]] --list [ (jail_name) [ (jail_name) ... ] ]
 
 		If no jail_name is given, print a tab-delimited list of jails
 		known to jail(8).  Otherwise, print jail_name for each 
@@ -22,14 +22,14 @@ usage:
 		jails can be found, return failure.  This can be used to
 		test whether a jail is defined:
 
-			for j in myjail \$(jail-info.sh --list) bogus; do
+			for j in bogus1 $(jail-info.sh --list) bogus2; do
 			  jail-info.sh list $j > /dev/null ||
 				echo "jail $j was not found"
 			done
 
 	jail-info.sh [ (jail_name) | all ] [ all | param [ param ... ] ]
 
-		show value of param in the configuration for jail
+		show value of param(s) in the configuration for jail
 		(jail_name); if "all" is used as a jail name, show the
 		selected params for all defined jails.  If "all" is used as 
 		the first parameter name, print all parameters for the
@@ -114,35 +114,49 @@ usage:
 					printf 'jail root is "%s"\n' "$3"
 				done
 
+		-q	(quiet) Omit warning messages that would normally go to 
+			stderr.
+
 EOF
 
 } # usage
 
 
-list=
-
-while getopts "dnh?-:" opt
+while getopts "dhlnq-:" opt
 do
-	case "$opt" in
-	-)
-		[[ "$OPTARG" == "list" ]] && list=1 #&& echo list
+    case "$opt" in
+    d)
+        debug=1
+        ;;
+    [?h])
+        help=1
+        ;;
+    l)
+        list=1
+        ;;
+    n)
+        vals_only=1     # show values only, not variable names
+        ;;
+    q)
+        quiet=1
+        ;;
+    -)
+		opt="$OPTARG"
+		case "$opt" in
+		debug|list|quiet|help)
+        	eval "${opt}=1"
+        	;;
+    	*)
+        	printf 'unknown option: %s\n' "$opt"
+		esac
 		;;
-	d)
-		debug=1
-		;;
-	n)
-		vals_only=1		# show values only, not variable names
-		;;
-	h|\?)
-		usage
-		exit 1
-		;;
-	*)
-		printf 'unknown option: %s\n' "$opt"
-	esac
+    *)
+        printf 'unknown option: %s\n' "$opt"
+    esac
 done
 
 shift $(($OPTIND-1))
+
 
 
 jail_info() {
@@ -154,25 +168,31 @@ jail_info() {
 
 jail_pop_array() {
 
-#	args are call-by-reference, not call-by-value
+#	args are CALL-BY-REFERENCE, *not* call-by-value
 
 #	$1 is NAME of associative array to return
-#	$2 is NAME of indexed NUL-terminated array to read from
+#	$2 is NAME of indexed array of NUL-terminated strings.
+#	The first jail described in $2 will be popped off and
+#	returned as associative array $1.  A "jail" entry is
+#	represented by any number of non-empty strings, followed
+#	by one empty string.
 
-#	The first jail described in $2 will be popped off and returned
-#	as associative array $1.
+#	Because the keys of an associative array are not ordered,
+#	one additional associative key will be added: ["_keys"] 
+#	will contain a space-separated list of the keys in the
+#	order in which jail(8) provided them to us.
 
 #	CALLER MUST declare $1 associative PRIOR to calling
 
 local -n jpop="$1" jails="$2"
 local ind elem var val
 
-	for var in ${!jpop[@]}
+	for var in ${!jpop[@]}	# clear all existing values
 	do
 		unset jpop["$var"]
 	done
 
-# keep a list of the keys in the order they were added
+# create a list of the keys in the order they were added
 
 	jpop["_keys"]=" "
 
@@ -233,7 +253,7 @@ local rc=1 sp v val
 
 		else	# parameter is unset
 
-			printf >&2 'parameter "%s" is unset in jail %s\n' \
+			[[ $quiet ]] || printf >&2 'parameter "%s" is unset in jail %s\n' \
 				"${v}" "${jail[name]}" 
 			if [[ $vals_only ]]
 			then
@@ -270,22 +290,17 @@ main() {
 #          or jail parameters or "all" for "all" or jail name
 # update the above when the dust settles
 
-#echo ${list@A}
-
-local rc=1 jails params cmd j_array one_jail sp
+local rc=1 jails params j_array one_jail sp
 
 declare -a jails params
 
 	if [[ "$list" ]]						# possibly followed by jail names
 	then									# to list, *if* they are defined
 
-#echo main: list
-		cmd="list"
 		[[ $# -eq 0 ]] || jails=( "$@" )	# empty array means list all defined names
 
 	else									# otherwise $1 is "all" or a jail name
 
-		cmd="show"			
 		[[ "${1,,}" == "all" ]] || jails=( "$1" )	# empty array means all jails
 		shift
 		[[ "${1,,}" == "all" ]] || params=( "$@" )	# empty array means all parameters
@@ -304,7 +319,7 @@ declare -a jails params
 	while jail_pop_array one_jail j_array	# pop one jail off of j_array into j
 	do {
 
-		if [[ "$cmd" == "list" ]]
+		if [[ "$list" ]]
 		then
 
 			if ( [[ ${#jails[@]} -eq 0 ]] ||
@@ -315,8 +330,7 @@ declare -a jails params
 				sp=$'\n'	# we'll need a newline eventually
 			fi
 
-		elif [[ "$cmd" == "show" ]]
-		then
+		else
 
 			if ( [[ ${#jails[@]} -eq 0 ]] ||
 					egrep -Fqx "${one_jail["name"]}" < <(printf '%s\n' "${jails[@]}") )
@@ -346,5 +360,8 @@ declare -a jails params
 
 } # main
 
+
+[[ $help ]] && { usage; exit 1; }
+[[ $list ]] || [ $# -gt 0 ] || { usage; exit 1; }
 
 main "$@"
