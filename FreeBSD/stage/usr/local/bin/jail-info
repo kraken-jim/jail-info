@@ -66,9 +66,8 @@ usage:
             parameter "devfs_ruleset" is unset in jail puppet-test
             parameter "devfs_ruleset" is unset in jail webwork2
 
-        Either way the result code is the successful, because the 
-        parameter was found in at least one jail.  Conversely, the
-        case of:
+        Either way the result code is successful, because the parameter 
+        was found in at least one jail.  Conversely, the case of:
 
             jail-info all foobar ; echo $?
 
