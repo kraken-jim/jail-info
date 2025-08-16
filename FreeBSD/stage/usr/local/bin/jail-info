@@ -13,39 +13,42 @@ usage() {
 cat << \EOF
 usage:
 
-	jail-info.sh [-[hnq]] --list [ (jail_name) [ (jail_name) ... ] ]
+	jail-info [ --list | -l ] [ (jail_name) [ (jail_name) ... ] ]
 
-		If no jail_name is given, print a tab-delimited list of jails
-		known to jail(8).  Otherwise, print jail_name for each 
-		jail_name specified that is known to jail(8).  If at least
-		one of the jails is found, return success.  If none of the
-		jails can be found, return failure.  This can be used to
-		test whether a jail is defined:
+		List defined jail names.  If one or more jail names are
+		specified, print the name attribute for each jail_name that
+		is known to jail(8).  If no jail_name is specified, print all
+		jail names known to jail(8).  If at least one matching jail
+		is found, return success.  If none of the jails can be found,
+		return failure.  This can be used with the -n option (below)
+		to test whether a jail is defined:
 
-			for j in bogus1 $(jail-info.sh --list) bogus2; do
-			  jail-info.sh list $j > /dev/null ||
+			for j in bogus1 $(jail-info -ln) bogus2; do
+			  jail-info -ln $j > /dev/null ||
 				echo "jail $j was not found"
 			done
 
-	jail-info.sh [ (jail_name) | all ] [ all | param [ param ... ] ]
+	jail-info [ (jail_name) | all ] [ param [ param ... ] ]
 
-		show value of param(s) in the configuration for jail
-		(jail_name); if "all" is used as a jail name, show the
-		selected params for all defined jails.  If "all" is used as 
-		the first parameter name, print all parameters for the
-		selected jail(s).  If none of the parameters is defined, 
-		return failure, else return success.
+		Show the values of param(s) in the configuration for jail
+		(jail_name).  If "all" is used as the jail name, show the
+		specified params for all jails known to jail(8).  If no
+		parameter names are specified, print all parameters for the
+		specified jail(s).  Otherwise, print only the specified
+		parameters.  If none of the parameters is defined, or if
+		jail_name is not defined, return failure, else return
+		success.
 
 		If none of the given parameters are defined in the specified
 		jails, a failure result code is returned.  If at least one of
 		the parameters is defined in at least one of the jails, then
-		those parameters which are not defined in any of the jails are
-		printed as "--", and the rest of the parameters are printed 
-		normally.  Be aware that messages to stderr may be intermingled
-		with message to stdout, and it may be desirable to redirect 
-		them separately:
+		those parameters which are not defined in any of the jails
+		are printed as "--", and the rest of the parameters are
+		printed normally.  Be aware that messages to stderr may be
+		intermingled with message to stdout, and it may be desirable
+		to redirect them separately:
 
-			jail-info.sh -n all devfs_ruleset name path 2>/dev/null
+			jail-info -n all devfs_ruleset name path 2>/dev/null
 			-- 'aarch64' '/jail/aarch64'
 			-- 'mailman2' '/jail/mailman2'
 			-- 'puppet-test' '/jail/puppet-test'
@@ -57,7 +60,7 @@ usage:
 		would have made that obvious were discarded to /dev/null.
 		Discarding stdout instead yields:
 
-			jail-info.sh -n all devfs_ruleset name path >/dev/null
+			jail-info -n all devfs_ruleset name path >/dev/null
 			parameter "devfs_ruleset" is unset in jail aarch64
 			parameter "devfs_ruleset" is unset in jail mailman2
 			parameter "devfs_ruleset" is unset in jail puppet-test
@@ -67,7 +70,7 @@ usage:
 		parameter was found in at least one jail.  Conversely, the
 		case of:
 
-			jail-info.sh all foobar ; echo $?
+			jail-info all foobar ; echo $?
 
 		yields stderr of:
 
@@ -89,7 +92,7 @@ usage:
 		between a defined parameter with a null value versus an 
 		undefined parameter.  A mixed case may be more interesting:
 
-			jail-info.sh all devfs_ruleset 2>/dev/null; echo $?
+			jail-info all devfs_ruleset 2>/dev/null; echo $?
 			unset devfs_ruleset
 			unset devfs_ruleset
 			unset devfs_ruleset
@@ -101,13 +104,13 @@ usage:
 		-h	Show this help message.
 
  		-n	Do not show variable names.  Show values only, all on one
-			line.  For each jail, in sequence, the selected parameter 
+			line.  For each jail, in sequence, the specified parameter 
 			values are printed with with bash-style quoting, space-
 			separated, in the order specified on the command line.  
 			This option is useful for setting shell variables, for
 			example:
 
-				jail-info.sh -n all linux.osname name path |
+				jail-info -n all linux.osname name path |
 				while IFS= read -r line; do 
 					eval set -- "${line}"
 					printf 'jail "%s" is running "%s", ' "$2" "$1"
@@ -161,8 +164,16 @@ shift $(($OPTIND-1))
 
 jail_info() {
 
-	jail -e ''		# NUL-delimited fields, with an empty,
-					# NUL-delimited line between jails
+# This requires patch to jail(8) from 
+# https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=287615  to
+# generate NUL-delimited fields, with an empty NUL line between jails.
+
+local q		# so we can support the --quiet flag
+
+	q="$([[ $quiet ]] && echo '2>/dev/null' || true)"
+
+	eval jail -e '""' $q			# NUL-delimited
+
 } # jail_info
 
 
@@ -202,9 +213,7 @@ local ind elem var val
 		elem="${jails[ind]}"
 		unset jails[$ind]
 
-#[[ $debug ]] && printf >&2 '%2d:	%s\n' $ind "$elem"
-
-		[[ "$elem" ]] || break
+		[[ "$elem" ]] || break	# If elem is empty, that's end-of-jail
 
 		var="${elem%%=*}"		# variable name
 		val="${elem#$var}"		# remainder is value
@@ -287,7 +296,7 @@ main() {
 # this has changed:
 # $1 is "list", "all" or jail name
 # $2 .. $N is jail names for "list"
-#          or jail parameters or "all" for "all" or jail name
+#          or jail parameters
 # update the above when the dust settles
 
 local rc=1 jails params j_array one_jail sp
@@ -303,7 +312,7 @@ declare -a jails params
 
 		[[ "${1,,}" == "all" ]] || jails=( "$1" )	# empty array means all jails
 		shift
-		[[ "${1,,}" == "all" ]] || params=( "$@" )	# empty array means all parameters
+		params=( "$@" )						# empty array means all parameters
 
 	fi
 
@@ -325,9 +334,18 @@ declare -a jails params
 			if ( [[ ${#jails[@]} -eq 0 ]] ||
 					egrep -Fqx "${one_jail["name"]}" < <(printf '%s\n' "${jails[@]}") )
 			then
-				printf '%s' "${sp:+$'\t'}" "${one_jail["name"]}"
-				rc=0
-				sp=$'\n'	# we'll need a newline eventually
+				if [[ $vals_only ]]
+				then
+					printf '%s' "${sp:+$'\t'}" "${one_jail["name"]}"
+					sp=$'\n'	# add a newline at the end
+					rc=0
+				else
+					for k in name
+					do
+						printf '%s=%s\n' "$k" "${one_jail["$k"]@Q}"
+					done
+					rc=0
+				fi
 			fi
 
 		else
@@ -346,7 +364,6 @@ declare -a jails params
 				fi
 
 				jail_print "one_jail" "$@" && rc=0
-#				rc=$?
 
 			fi
 
