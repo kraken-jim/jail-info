@@ -432,6 +432,9 @@ declare -a jails params
 
     printf '%s' "$sp"       # print newline if needed
 
+    [[ $rc -gt 0 ]] && [[ ${#jails[@]} -eq 1 ]] && 
+        [[ ! $quiet ]] && printf >&2 'jail not found: "%s"\n' "${jails[0]}"
+
     return $rc
 
 } # main
