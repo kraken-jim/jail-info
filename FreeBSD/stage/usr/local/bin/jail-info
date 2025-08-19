@@ -444,7 +444,7 @@ declare -a jails params
 
             if [[ $vals_only ]]
             then
-                printf '%s' "${sp:+$'\t'}" "${one_jail["$k"]@Q}"
+                printf '%s' "${sp:+$' '}" "${one_jail["$k"]@Q}"
                 sp=$'\n'    # add a newline at the end
             else
                 printf '%s=%s\n' "$k" "${one_jail["$k"]@Q}"
