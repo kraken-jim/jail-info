@@ -254,7 +254,7 @@ jail_pop_array() {
 
 #   CALLER MUST declare $1 associative PRIOR to calling
 
-local -n jpop="$1" jails="$2"
+local -n jpop="$1" jailstack="$2"
 local ind elem var val
 
     for var in ${!jpop[@]}  # clear all existing values
@@ -266,11 +266,11 @@ local ind elem var val
 
     jpop["_keys"]=" "
 
-    for ind in ${!jails[@]}
+    for ind in ${!jailstack[@]}
     do
 
-        elem="${jails[ind]}"
-        unset jails[$ind]
+        elem="${jailstack[ind]}"
+        unset jailstack[$ind]
 
         [[ "$elem" ]] || break  # If elem is empty, that's end-of-jail
 
@@ -305,6 +305,7 @@ local rc=1 sp v val
 
     for v in "${@}"
     do
+
         if [[ "${jail[$v]@Q}" ]]        # if parameter is set, even empty string
         then
 
@@ -332,7 +333,9 @@ local rc=1 sp v val
             fi
 
         fi
+
     done
+
     if [[ $vals_only ]] && [[ $sp ]]
     then
         printf '\n'
@@ -352,22 +355,25 @@ local rc=1 sp v val
 
 main() {
 
-# this has changed:
-# $1 is "list", "all" or jail name
-# $2 .. $N is jail names for "list"
-#          or jail parameters
-# update the above when the dust settles
+# If "$list" is set, then $@ are jail names.  If $@
+#   is empty, that means list all jail names.
+# If "$list" is NOT set, then:
+#   "$1" is a jail name, or the literal "all" for all jails.
+#   "$2" and beyond are parameter names.  Those parameters
+#   will be printed for the jails indicated by $1.  If $2
+#   is empty, then all parameters will be printed for the
+#   indicated jails.
 
-local rc=1 jails params j_array one_jail sp
+local rc=1 k jails params j_array one_jail sp jail_found
 
 declare -a jails params
 
-    if [[ "$list" ]]                        # possibly followed by jail names
-    then                                    # to list, *if* they are defined
+    if [[ "$list" ]]                    # possibly followed by jail names
+    then                                # to list, *if* they exist in jail(8)
 
-        [[ $# -eq 0 ]] || jails=( "$@" )    # empty array means list all defined names
+        jails=( "$@" )                  # empty array means list all defined names
 
-    else                                    # otherwise $1 is "all" or a jail name
+    else                                # otherwise $1 is "all" OR a jail name
 
         [[ "${1,,}" == "all" ]] || jails=( "$1" )   # empty array means all jails
         shift
@@ -375,56 +381,86 @@ declare -a jails params
 
     fi
 
-# jail_info returns NUL-delimited lines, one field per line.
-# lines start with <variablename>.  one empty NUL-terminated
-# line after each jail.
+[[ $debug ]] && echo "${#jails[@]} jail(s) spec'd by user:"
+[[ $debug ]] && echo "${jails[@]@A}"
+
+# Check parameter names for unsavory characters:
+
+    k=$'[^A-Za-z0-9._]'     # character class of chars we want to exclude
+
+    if k="$(egrep $k < <(printf '%s\n' "${params[@]}"))" &&
+        [[ $k ]]
+    then
+        [[ $quiet ]] || 
+            sed >&2 's/^/invalid parameter name: /' <<< "$k"
+        rc=1
+        return $rc
+    fi
+
+
+# Function jail_info (above) returns NUL-delimited lines, one field per line.
+# Lines start with <variablename>.  One empty NUL-terminated line indicates
+# the end of that jail's output.
 
     readarray -d "" j_array < <(jail_info) || return
     [[ ${#j_array[@]} -gt 0 ]] || return
 
-    declare -A one_jail                     # Must declare associative BEFORE call
 
-    while jail_pop_array one_jail j_array   # pop one jail off of j_array into j
+# Now:
+
+#   jails is an array of jail names spec'd by the user (possibly empty,
+#       meaning all).
+
+#   j_array is array of NUL-delimited jail parameters, unfiltered,
+#       from jail(8).  Each jail ends with an empty NUL-terminated string.
+
+#   params is an array of parameters spec'd by the user, possibly empty.
+#       meaning all.
+
+
+# "one_jail" MUST be declared associative BEFORE calling "jail_pop_array":
+
+    declare -A one_jail
+
+    while jail_pop_array one_jail j_array   # pop next jail off j_array into one_jail
     do {
+
+        if [[ ${#jails[@]} -gt 0 ]]         # if jail name(s) are spec'd
+        then                                # and one_jail[name] is NOT in them:
+
+            if ! egrep -Fqx "${one_jail["name"]}" < <(printf '%s\n' "${jails[@]}")
+            then
+                continue                    # then skip this one, go on to next jail
+            fi
+
+        fi
+
+        jail_found=1        # yay, we found at least one of the user's jails
 
         if [[ "$list" ]]
         then
 
-            if ( [[ ${#jails[@]} -eq 0 ]] ||
-                    egrep -Fqx "${one_jail["name"]}" < <(printf '%s\n' "${jails[@]}") )
+            k="name"
+
+            if [[ $vals_only ]]
             then
-                if [[ $vals_only ]]
-                then
-                    printf '%s' "${sp:+$'\t'}" "${one_jail["name"]@Q}"
-                    sp=$'\n'    # add a newline at the end
-                    rc=0
-                else
-                    for k in name
-                    do
-                        printf '%s=%s\n' "$k" "${one_jail["$k"]@Q}"
-                    done
-                    rc=0
-                fi
+                printf '%s' "${sp:+$'\t'}" "${one_jail["$k"]@Q}"
+                sp=$'\n'    # add a newline at the end
+            else
+                printf '%s=%s\n' "$k" "${one_jail["$k"]@Q}"
             fi
+            rc=0
 
         else
 
-            if ( [[ ${#jails[@]} -eq 0 ]] ||
-                    egrep -Fqx "${one_jail["name"]}" < <(printf '%s\n' "${jails[@]}") )
+            if [[ ${#params[@]} -gt 0 ]]    # if specific params are given,
             then
-
-# some parameters are simply declared, but not assigned any value.
-
-                if [[ ${#params[@]} -gt 0 ]]    # if specific params are given,
-                then
-                    set -- ${params[@]}         # then use only those.
-                else
-                    set -- ${one_jail["_keys"]} # Otherwise show all params
-                fi
-
-                jail_print "one_jail" "$@" && rc=0
-
+                set -- ${params[@]}         # then print only those.
+            else
+                set -- ${one_jail["_keys"]} # Otherwise print all params
             fi
+
+            jail_print "one_jail" "$@" && rc=0
 
         fi
 
@@ -432,8 +468,18 @@ declare -a jails params
 
     printf '%s' "$sp"       # print newline if needed
 
-    [[ $rc -gt 0 ]] && [[ ${#jails[@]} -eq 1 ]] && 
-        [[ ! $quiet ]] && printf >&2 'jail not found: "%s"\n' "${jails[0]}"
+#[[ $debug ]] && echo "${list@A}"
+#[[ $debug ]] && echo "${rc@A}"
+#[[ $debug ]] && echo "${quiet@A}"
+#[[ $debug ]] && echo "${jail_found@A}"
+#[[ $debug ]] && echo "${jails[@]@A}"
+
+    if [[ "$list" ]]
+    then
+        [[ $rc -gt 0 ]] && [[ ! $quiet ]] && printf >&2 'jail not found: "%s"\n' "${jails[@]}"
+    else
+        [[ ! $jail_found  ]] && [[ ! $quiet ]] && printf >&2 'jail not found: "%s"\n' "${jails[@]}"
+    fi
 
     return $rc
 
