@@ -1,5 +1,5 @@
 name: jail-info
-version: "0.8a"
+version: "0.9"
 origin: wwu/jail-info
 comment: "Shell script for parsing jail configuration parameters from jail(8)"
 desc: "Shell script for parsing jail configuration parameters from jail(8)"
