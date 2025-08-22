@@ -43,11 +43,11 @@ usage:
         is known to jail(8).  If no jail_name is specified, print all
         jail names known to jail(8).  If at least one matching jail
         is found, return success.  If none of the jails can be found,
-        return failure.  This can be used with the -n option (below)
+        return failure.  This can be used with the -q option (below)
         to test whether a jail is defined:
 
             for j in bogus1 $(jail-info -ln) bogus2; do
-                jail-info -ln $j > /dev/null ||
+                eval jail-info -lq $j > /dev/null ||
                     echo "jail $j was not found"
             done
 
@@ -111,10 +111,12 @@ usage:
             unset foobar
 
         but still a result code of 1.  The intent is to differentiate
-        (at least in verbose output mode) between a defined parameter
-        with a null value versus an undefined parameter.  If we modify
-        webwork2 to include the setting  devfs_ruleset = '';  then 
-        jail-info would output the following:
+        between a defined parameter with a null value versus an undefined
+        parameter.  If we modify webwork2 to include the setting 
+
+                devfs_ruleset = '';
+
+        then jail-info would output the following:
 
             # jail-info -q all devfs_ruleset; echo $?
             unset devfs_ruleset
@@ -149,6 +151,16 @@ usage:
             path='/jail/puppet-test'
             path='/jail/rocky'
             path='/jail/webwork2'
+
+        Care must be taken when using "jail-info -n all".  Because some 
+        jails may have parameters that are not defined in other jails, 
+        columnar output cannot be guaranteed to be in the same order 
+        unless specific columns are requested.  Attempting to iterate 
+        over the output of "jail-info -n all" should be avoided.  Instead,
+        list the specific parameters you require:
+
+            jail-info -n all name linux.osname path devfs_ruleset \
+                            ip_hostname interface ip4.addr
 
     OPTIONS
         --help
@@ -263,7 +275,7 @@ jail_pop_array () {
 #   The caller's indexed array "$2" is an ordered list of strings produced
 #   from the output of jail(8), specifically:
 #
-#       jail -e '"
+#       jail -e ''
 #
 #   A "jail" entry in $2 is represented by one or more consecutive non-empty
 #   strings, followed by one empty string (length of 0).
@@ -278,7 +290,7 @@ jail_pop_array () {
 #
 #   THE CALLER MUST declare $1 associative PRIOR to calling us.
 
-local -n jpop="$1" jailstack="$2"
+local -n jpop="$1" jailqueue="$2"
 local ind elem var val
 
     for var in ${!jpop[@]}      # For each array key value in jpop, ...
@@ -292,11 +304,11 @@ local ind elem var val
 
     unset ind                       # Unset ind, just to be explicit.
 
-    for ind in ${!jailstack[@]}     # For each (numeric) index in jailstack (if any),
+    for ind in ${!jailqueue[@]}     # For each (numeric) index in jailqueue (if any),
     do
 
-        elem="${jailstack[ind]}"    # Take the value of that element,
-        unset jailstack[$ind]       #   and then unset it.
+        elem="${jailqueue[ind]}"    # Take the value of that element,
+        unset jailqueue[$ind]       #   and then unset it.
 
         [[ "$elem" ]] || break      # "elem" must be non-empty, else that's end-of-jail
 
