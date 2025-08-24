@@ -36,160 +36,157 @@ usage () {
 cat << \EOF
 usage:
 
-    jail-info [ --list | -l ] [ (jail_name) [ (jail_name) ... ] ]
+jail-info [ --list | -l ] [ (jail_name) [ (jail_name) ... ] ]
 
-        List defined jail names.  If one or more jail names are
-        specified, print the name attribute for each jail_name that
-        is known to jail(8).  If no jail_name is specified, print all
-        jail names known to jail(8).  If at least one matching jail
-        is found, return success.  If none of the jails can be found,
-        return failure.  This can be used with the -q option (below)
-        to test whether a jail is defined:
+    List defined jail names.  If one or more jail names are
+    specified, print the name attribute for each jail_name that
+    is known to jail(8).  If no jail_name is specified, print all
+    jail names known to jail(8).  If at least one matching jail
+    is found, return success.  If none of the jails can be found,
+    return failure.  This can be used with the -q option (below)
+    to test whether a jail is defined:
 
-            for j in bogus1 $(jail-info -ln) bogus2; do
-                eval jail-info -lq $j > /dev/null ||
-                    echo "jail $j was not found"
-            done
+        for j in bogus1 $(jail-info -ln) bogus2; do
+            eval jail-info -lq $j > /dev/null ||
+                echo "jail $j was not found"
+        done
 
-    jail-info [ (jail_name) | all ] [ param [ param ... ] ]
+jail-info [ (jail_name) | all ] [ param [ param ... ] ]
 
-        Show the values of param(s) in the configuration for jail
-        (jail_name).  If "all" is used as the jail name, show the
-        specified params for all jails known to jail(8).  If no
-        parameter names are specified, print all parameters for the
-        specified jail(s).  Otherwise, print only the specified
-        parameters.  If none of the parameters is defined, or if
-        jail_name is not defined, return failure, else return
+    Show the values of param(s) for jail (jail_name).  If "all" 
+    is given as the jail name, show the specified params for all 
+    jails known to jail(8).  If no parameter names are specified, 
+    print all parameters for the jail_name specified, or for all 
+    jails.  Otherwise, print only the specified parameters.  If 
+    none of the parameters is defined, or if jail_name is not 
+    defined, return failure, else return success.
+
+    If at least one of the parameters is defined in at least one 
+    jail, then those parameters which are not defined in a given 
+    jail are explicitly unset in the output:
+
+        # jail-info -q aarch64 devfs_ruleset name path
+        unset devfs_ruleset
+        name='aarch64'
+        path='/jail/aarch64'
+
+    In single-line mode (-n), undefined values are indicated by
+    the special unquoted value '--':
+
+        # jail-info -qn all devfs_ruleset name path
+        -- 'aarch64' '/jail/aarch64'
+        -- 'mailman2' '/jail/mailman2'
+        -- 'puppet-test' '/jail/puppet-test'
+        '7' 'rocky' '/jail/rocky'
+        -- 'webwork2' '/jail/webwork2'
+
+    In the above examples, -q (Quiet) is used silence certain 
+    messages that would otherwise go to stderr:
+
+        # jail-info -n all devfs_ruleset name path >/dev/null
+        parameter "devfs_ruleset" is unset in jail aarch64
+        parameter "devfs_ruleset" is unset in jail mailman2
+        parameter "devfs_ruleset" is unset in jail puppet-test
+        parameter "devfs_ruleset" is unset in jail webwork2
+
+    The intent is to differentiate between a defined parameter 
+    with a null value versus an undefined parameter.  If we 
+    modify webwork2 to include the setting:
+
+            devfs_ruleset = '';
+
+    then jail-info would output the following:
+
+        # jail-info -q all devfs_ruleset; echo $?
+        unset devfs_ruleset
+        unset devfs_ruleset
+        unset devfs_ruleset
+        devfs_ruleset='7'
+        devfs_ruleset=''
+        0
+
+    Either way the result code is successful, because the 
+    parameter was found in at least one jail.  Conversely, the 
+    case of:
+
+        # jail-info all foobar ; echo $?
+        unset foobar
+        unset foobar
+        unset foobar
+        unset foobar
+        unset foobar
+        1
+
+    shows a result code of 1, because the parameter given does 
+    not exist in any of the jails.
+
+    Finally, jail-info will always iterate over jails in the 
+    order that jail(8) lists them.  So for example, if:
+
+        # jail-info -l 
+        name='aarch64'
+        name='mailman2'
+        name='puppet-test'
+        name='rocky'
+        name='webwork2'
+
+    Then any subset of jails will still be listed in the above 
+    order:
+
+        # jail-info -l webwork2 rocky aarch64
+        name='aarch64'
+        name='rocky'
+        name='webwork2'
+
+    As will:
+
+        # jail-info all path
+        path='/jail/aarch64'
+        path='/jail/mailman2'
+        path='/jail/puppet-test'
+        path='/jail/rocky'
+        path='/jail/webwork2'
+
+    Care must be taken when using "jail-info -n all".  Because 
+    some jails may have parameters that are not defined in other 
+    jails, columnar output cannot be guaranteed to be in the 
+    same order unless specific columns are requested.
+
+    If the user intends to iterate over the columnar output of 
+    'jail-info -n all' then the user must explicitly specify the
+    columns desired:
+
+        jail-info -n all name linux.osname path devfs_ruleset \
+                        ip_hostname interface ip4.addr
+
+OPTIONS
+    --help
+    -h  Show this help message.
+
+    --list
+    -l  List jail names only.  If no jail names are provided,
+        list all jails.  Otherwise, check each jail name
+        provided, and if is known to jail(8), list that jail
+        name.  If none of the jail names provided are known,
+        return a failure result code.  Otherwise return
         success.
 
-        If at least one of the parameters is defined in at least one
-        of the jails, then those parameters which are not defined in
-        any of the jails are printed as "--" in single-line mode
-        (-n), or explicitly unset when -n is not used.  rest of the
-        parameters are printed normally.  Be aware that messages to
-        stderr may be intermingled with message to stdout, and it may
-        be desirable to redirect them separately:
+    -n  Do not show variable names.  Show values only, one line
+        per jail.  For each jail, in sequence, the specified
+        parameter values are printed with bash-style quoting,
+        space-separated, in the order specified on the
+        command line.  This option is useful for setting
+        shell positional variables:
 
-            # jail-info -n all devfs_ruleset name path 2>/dev/null
-            -- 'aarch64' '/jail/aarch64'
-            -- 'mailman2' '/jail/mailman2'
-            -- 'puppet-test' '/jail/puppet-test'
-            '7' 'rocky' '/jail/rocky'
-            -- 'webwork2' '/jail/webwork2'
+            jail-info -n all linux.osname name path |
+            while IFS= read -r line; do 
+                eval set -- "${line}"
+                printf 'jail "%s" is running "%s", ' "$2" "$1"
+                printf 'jail root is "%s"\n' "$3"
+            done
 
-        In this example, we see that only the "rocky" jail has the 
-        "devfs_ruleset" parameter defined.  The error messages that
-        would have made that obvious were discarded by sending stdout
-        to /dev/null.  For convenience, the -q option is provided to
-        silence certain messages that would otherwise go to stderr:
-
-            # jail-info -n all devfs_ruleset name path >/dev/null
-            parameter "devfs_ruleset" is unset in jail aarch64
-            parameter "devfs_ruleset" is unset in jail mailman2
-            parameter "devfs_ruleset" is unset in jail puppet-test
-            parameter "devfs_ruleset" is unset in jail webwork2
-
-        Either way the result code is successful, because the parameter 
-        was found in at least one jail.  Conversely, the case of:
-
-            jail-info all foobar ; echo $?
-
-        yields stderr of:
-
-            parameter "foobar" is unset in jail aarch64
-            parameter "foobar" is unset in jail mailman2
-            parameter "foobar" is unset in jail puppet-test
-            parameter "foobar" is unset in jail rocky
-            parameter "foobar" is unset in jail webwork2
-
-        and a result code of 1.  The stdout from that command is:
-
-            unset foobar
-            unset foobar
-            unset foobar
-            unset foobar
-            unset foobar
-
-        but still a result code of 1.  The intent is to differentiate
-        between a defined parameter with a null value versus an undefined
-        parameter.  If we modify webwork2 to include the setting 
-
-                devfs_ruleset = '';
-
-        then jail-info would output the following:
-
-            # jail-info -q all devfs_ruleset; echo $?
-            unset devfs_ruleset
-            unset devfs_ruleset
-            unset devfs_ruleset
-            devfs_ruleset='7'
-            devfs_ruleset=''
-            0
-
-        Finally, jail-info will always iterate over jails in the order
-        that jail(8) lists them.  So for example, if:
-
-            # jail-info -l 
-            name='aarch64'
-            name='mailman2'
-            name='puppet-test'
-            name='rocky'
-            name='webwork2'
-
-        Then this command will list the jails in the above order:
-
-            # jail-info -l webwork2 rocky aarch64
-            name='aarch64'
-            name='rocky'
-            name='webwork2'
-
-        As will:
-
-            # jail-info all path
-            path='/jail/aarch64'
-            path='/jail/mailman2'
-            path='/jail/puppet-test'
-            path='/jail/rocky'
-            path='/jail/webwork2'
-
-        Care must be taken when using "jail-info -n all".  Because some 
-        jails may have parameters that are not defined in other jails, 
-        columnar output cannot be guaranteed to be in the same order 
-        unless specific columns are requested.  Attempting to iterate 
-        over the output of "jail-info -n all" should be avoided.  Instead,
-        list the specific parameters you require:
-
-            jail-info -n all name linux.osname path devfs_ruleset \
-                            ip_hostname interface ip4.addr
-
-    OPTIONS
-        --help
-        -h  Show this help message.
-
-        --list
-        -l  List jail names only.  If no jail names are provided,
-            list all jails.  Otherwise, check each jail name
-            provided, and if is known to jail(8), list that jail
-            name.  If none of the jail names provided are known,
-            return a failure result code.  Otherwise return
-            success.
-
-        -n  Do not show variable names.  Show values only, one line
-            per jail.  For each jail, in sequence, the specified
-            parameter values are printed with bash-style quoting,
-            space-separated, in the order specified on the
-            command line.  This option is useful for setting
-            shell positional variables:
-
-                jail-info -n all linux.osname name path |
-                while IFS= read -r line; do 
-                    eval set -- "${line}"
-                    printf 'jail "%s" is running "%s", ' "$2" "$1"
-                    printf 'jail root is "%s"\n' "$3"
-                done
-
-        --quiet
-        -q  Omit warning messages that would normally go to stderr.
+    --quiet
+    -q  Omit warning messages that would normally go to stderr.
 
 EOF
 
