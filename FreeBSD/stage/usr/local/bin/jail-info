@@ -91,7 +91,7 @@ jail-info [ (jail_name) | all ] [ param [ param ... ] ]
 
     The intent is to differentiate between a defined parameter 
     with a null value versus an undefined parameter.  If we 
-    modify webwork2 to include the setting:
+    modify the configuration of jail webwork2 to include:
 
             devfs_ruleset = '';
 
@@ -147,17 +147,20 @@ jail-info [ (jail_name) | all ] [ param [ param ... ] ]
         path='/jail/rocky'
         path='/jail/webwork2'
 
-    Care must be taken when using "jail-info -n all".  Because 
-    some jails may have parameters that are not defined in other 
-    jails, columnar output cannot be guaranteed to be in the 
-    same order unless specific columns are requested.
+    Care must be taken when using "jail-info -n".  Because some 
+    jails may define parameters that are not defined in other 
+    jails, the order of columnar output **cannot be guaranteed**
+    unless specific columns are requested.
 
     If the user intends to iterate over the columnar output of 
-    'jail-info -n all' then the user must explicitly specify the
-    columns desired:
+    'jail-info -n' then the user must explicitly specify the
+    columnar order desired:
 
         jail-info -n all name linux.osname path devfs_ruleset \
                         ip_hostname interface ip4.addr
+
+    Without that syntax, the order of columns in "jail-info -n"
+    is **undefined**.
 
 OPTIONS
     --help
@@ -431,7 +434,7 @@ declare -a jails params
 
     k=$'[^A-Za-z0-9._]'     # Fail on any characters outside this class.
 
-    if k="$(egrep $k < <(printf '%s\n' "${params[@]}"))" &&
+    if k="$(egrep "$k" < <(printf '%s\n' "${params[@]}"))" &&
         [[ $k ]]
     then
         [[ $quiet ]] || 
